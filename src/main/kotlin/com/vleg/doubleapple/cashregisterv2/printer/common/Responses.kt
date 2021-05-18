@@ -5,11 +5,6 @@ import java.math.BigInteger
 import java.time.LocalDate
 import java.time.ZonedDateTime
 
-data class CategoryResponse(
-    val id: Long,
-    val name: String
-)
-
 data class DiscountResponse(
     val discountCode: String,
     val amount: BigDecimal
@@ -21,7 +16,7 @@ data class EmployeeResponse(
     val password: String
 )
 
-data class OrderResponse(
+data class OrderPrintRequest(
     val id: Long,
     val workingDay: WorkingDayResponse,
     val positions: Set<PositionResponse>,
@@ -67,11 +62,6 @@ data class ProductResponse(
 data class TableResponse(
     val id: Long,
     val market: Market
-)
-
-data class VerifyCodeResponse(
-    val isCodeAcceptable: Boolean,
-    val availableDiscountAmount: BigDecimal
 )
 
 data class WorkingDayResponse(

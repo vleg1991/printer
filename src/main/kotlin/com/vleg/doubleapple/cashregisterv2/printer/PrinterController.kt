@@ -1,27 +1,29 @@
 package com.vleg.doubleapple.cashregisterv2.printer
 
-import com.vleg.doubleapple.cashregisterv2.printer.common.OrderResponse
-import com.vleg.doubleapple.cashregisterv2.printer.common.PrintRequest
+import com.vleg.doubleapple.cashregisterv2.printer.common.OrderPrintRequestSplit
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RestController
-import java.lang.Exception
 import java.math.BigDecimal
+import java.nio.charset.Charset
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import javax.print.DocFlavor
 import javax.print.PrintServiceLookup
 import javax.print.SimpleDoc
+
 
 @RestController
 class PrinterController {
 
     @PostMapping("/print")
-    fun print(@RequestBody request: PrintRequest) {
+    fun print(@RequestBody request: OrderPrintRequestSplit) {
         try {
             PrintServiceLookup.lookupDefaultPrintService()
                 .createPrintJob()
                 .print(
                     SimpleDoc(
-                        createPrintableVersion(request.order).toByteArray(),
+                        createPrintableVersion(request).toByteArray(Charset.forName("Cp866")),
                         DocFlavor.BYTE_ARRAY.AUTOSENSE,
                         null
                     ),
@@ -33,27 +35,54 @@ class PrinterController {
     }
 
 
-    private fun createPrintableVersion(order: OrderResponse): String {
+    private fun createPrintableVersion(req: OrderPrintRequestSplit): String {
 
-        val header = HEADER_TEMPLATE.replace("{TABLE_NUMBER}", "${order.table?.id ?: 0L}")
-        val openedAt = OPENED_AT_TEMPLATE.replace("{OPENED_DATE}", "${order.startDate}")
-        val closedAt = CLOSED_AT_TEMPLATE.replace("{CLOSED_DATE}", "${order.endDate}")
+        val order = req.payload
+        val header = HEADER_TEMPLATE
+            .replace("{INN}", req.inn)
+            .replace("{ADDRESS}", req.address)
+            .replace("{PHONE}", req.phone)
+            .replace("{TABLE}", req.table)
+            .replace("{TABLE_NUMBER}", "${order.table?.id ?: 0L}")
+        val openedAt = OPENED_AT_TEMPLATE
+            .replace("{OPEN}", req.open)
+            .replace("{OPENED_DATE}", order.startDate.withZoneSameInstant(ZoneId.of("GMT+04:00")).format(DateTimeFormatter.ofPattern("YYYY-MM-dd HH:mm:ss")))
+        val closedAt = CLOSED_AT_TEMPLATE
+            .replace("{CLOSE}", req.close)
+            .replace("{CLOSED_DATE}",
+                order.endDate?.withZoneSameInstant(ZoneId.of("GMT+04:00"))?.format(DateTimeFormatter.ofPattern("YYYY-MM-dd HH:mm:ss")) ?: req.preClose
+            )
         val positions = order.positions
             .foldIndexed("") { idx, acc, entry ->
                 acc.plus(
-                    POSITION_TEMPLATE.replace("{NUMBER}", "$idx")
+                    POSITION_TEMPLATE.replace("{NUMBER}", "${idx+1}")
                         .replace("{TITLE}", entry.product.name)
                         .replace("{PRICE}", "${entry.product.price}")
-                        .replace("{COUNT}", "${entry.count}")
+                        .replace("{COUNT_VALUE}", "${entry.count}")
+                        .replace("{COUNT}", req.count)
                         .replace("{SUM}", "${entry.amount}")
                         .plus("\n")
-                        .plus(GAP_TEMPLATE)
                 )
             }
+            .ifEmpty { "Позиций пока нет" }
         val summaryValue = order.positions.fold(BigDecimal.ZERO) { acc, pos -> acc.plus(pos.amount) }
-        val summary = SUMMARY_TEMPLATE.replace("{SUMMARY_VALUE}", "$summaryValue")
-            .replace("{DISCOUNT_VALUE}", "${order.discount}")
+        val summary = SUMMARY_TEMPLATE
+            .replace("{SUMMARY}", req.summary)
+            .replace("{SUMMARY_VALUE}", "$summaryValue")
+
+        val discount = if (order.discount?.amount ?: 0L != 0L) {
+            DISCOUNT_TEMPLATE
+                .replace("{DISCOUNT}", req.discount)
+                .replace("{DISCOUNT_VALUE}", "${order.discount?.amount ?: 0}")
+        } else {
+            ""
+        }
+        val footer = FOOTER_TEMPLATE
+            .replace("{FOR_PAYMENT}", req.forPayment)
             .replace("{FINAL_SUM_VALUE}", "${order.amount}")
+            .replace("{EMPLOYEE}", req.employee)
+            .replace("{EMPLOYER_NAME}", order.workingDay.employee.name)
+            .replace("{SIGN}", req.sign)
         return """
             |$header
             |
@@ -64,10 +93,21 @@ class PrinterController {
             |$closedAt
             |
             |$positions
-            |
             |$GAP_TEMPLATE
             |
             |$summary
+            |$discount
+            |$footer
+            |
+            |
+            |
+            |
+            |
+            |
+            |
+            |
+            |
+            |
         """.trimMargin()
     }
 
@@ -75,41 +115,43 @@ class PrinterController {
 
         private val HEADER_TEMPLATE = """
         |Double Apple
-        |РРќРќ: 638204704301
+        |{INN}: 638204704301
         |CAFE
-        |РњРѕСЃРєРѕРІСЃРєРѕРµ С€РѕСЃСЃРµ, Р»РёС‚Р• 110
-        |РўРµР».: +79379892877
-        |РЎС‚РѕР»РёРє в„– {TABLE_NUMBER}
+        |{ADDRESS}
+        |{PHONE}: +79379892877
+        |{TABLE} {TABLE_NUMBER}
         """.trimMargin()
 
         private val OPENED_AT_TEMPLATE = """
-        |РћС‚РєСЂС‹С‚
+        |{OPEN}
         |{OPENED_DATE}
         """.trimMargin()
 
         private val CLOSED_AT_TEMPLATE = """
-        |Р—Р°РєСЂС‹С‚
+        |{CLOSE}
         |{CLOSED_DATE}
         """.trimMargin()
 
         private val POSITION_TEMPLATE = """
         |{NUMBER} {TITLE}
-        |{PRICE} x {COUNT} С€С‚. = {SUM}
+        |{PRICE} x {COUNT_VALUE} {COUNT} = {SUM}
         """.trimMargin()
 
-        private val SUMMARY_TEMPLATE = """
-        |РС‚РѕРіРѕ: {SUMMARY_VALUE}
-        |РЎРєРёРґРєР°: {DISCOUNT_VALUE}
-        |Рљ РѕРїР»Р°С‚Рµ: {FINAL_SUM_VALUE}
+        private val SUMMARY_TEMPLATE = "{SUMMARY}: {SUMMARY_VALUE}"
+
+        private val DISCOUNT_TEMPLATE = "{DISCOUNT}: {DISCOUNT_VALUE}"
+
+        private val FOOTER_TEMPLATE = """
+        |{FOR_PAYMENT}: {FINAL_SUM_VALUE}
         |
-        |РљР°СЃСЃРёСЂ {EMPLOYER_NAME}
-        |РџРѕРґРїРёСЃСЊ 
+        |{EMPLOYEE} {EMPLOYER_NAME}
+        |{SIGN} 
         """.trimMargin()
 
         private val GAP_TEMPLATE = """
         |=============================
         """.trimMargin()
 
-        private val UNABLE_TO_PRINT = "РќРµ РїРѕР»СѓС‡РёР»РѕСЃСЊ СЂР°СЃРїРµС‡Р°С‚Р°С‚СЊ С‡РµРє. РћР±СЂР°С‚РёС‚РµСЃСЊ Рє Р°РґРјРёРЅРёСЃС‚СЂР°С‚РѕСЂСѓ."
+        private val UNABLE_TO_PRINT = "Не получилось распечатать чек. Обратитесь к администратору."
     }
 }

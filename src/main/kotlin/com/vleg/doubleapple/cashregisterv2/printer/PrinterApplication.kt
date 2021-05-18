@@ -8,4 +8,9 @@ class PrinterApplication
 
 fun main(args: Array<String>) {
 	runApplication<PrinterApplication>(*args)
+
+	println("")
+	println("")
+	println("")
+	println("STARTED !!!")
 }
